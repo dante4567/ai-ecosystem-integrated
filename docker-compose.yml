@@ -1,0 +1,63 @@
+# AI Ecosystem Integration - Docker Compose Configuration
+# This file combines RAG module, Personal module, and API Gateway
+# External ports: 8011 (RAG), 8012 (Personal), 8013 (Gateway)
+
+services:
+  rag-module:
+    build: ./rag-module
+    ports:
+      - "8011:8001"
+    environment:
+      - PORT=8001
+    env_file:
+      - .env
+    networks:
+      - ai-ecosystem
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  personal-module:
+    build: ./personal-module
+    ports:
+      - "8012:8002"
+    environment:
+      - PORT=8002
+    env_file:
+      - .env
+    networks:
+      - ai-ecosystem
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "8013:8003"
+    environment:
+      - PORT=8003
+      - RAG_SERVICE_URL=http://rag-module:8001
+      - PERSONAL_SERVICE_URL=http://personal-module:8002
+    env_file:
+      - .env
+    networks:
+      - ai-ecosystem
+    depends_on:
+      rag-module:
+        condition: service_healthy
+      personal-module:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  ai-ecosystem:
+    driver: bridge
