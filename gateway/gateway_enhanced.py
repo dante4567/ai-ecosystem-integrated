@@ -15,6 +15,7 @@ import uvicorn
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from smart_assistant import get_smart_assistant
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -151,6 +152,8 @@ async def root():
             "status": "/status",
             "search": "/search",
             "assistant": "/assistant",
+            "chat": "/chat",
+            "capabilities": "/capabilities",
             "rag": "/rag/*",
             "personal": "/personal/*",
             "functions": "/functions",
@@ -259,53 +262,51 @@ async def unified_search(request: SearchRequest):
     }
 
 @app.post("/assistant")
-async def smart_assistant(request: AssistantRequest):
-    """Smart assistant endpoint with intent-based routing"""
-    message = request.message.lower()
-
-    # Simple intent detection
-    intent = "general"
-    if any(word in message for word in ["search", "find", "lookup", "know"]):
-        intent = "search"
-    elif any(word in message for word in ["task", "todo", "schedule", "reminder"]):
-        intent = "personal"
-    elif any(word in message for word in ["explain", "what is", "define"]):
-        intent = "knowledge"
-
-    response = {
-        "intent": intent,
-        "message": request.message,
-        "response": "",
-        "data": None,
-        "timestamp": datetime.now().isoformat()
-    }
-
+async def smart_assistant_endpoint(request: AssistantRequest):
+    """Enhanced smart assistant endpoint with advanced intent recognition"""
     try:
-        if intent == "search" or intent == "knowledge":
-            # Route to RAG
-            rag_response = await health_checker.make_request(
-                f"{RAG_SERVICE_URL}/search",
-                "POST",
-                {"query": request.message, "max_results": 3}
-            )
-            if "error" not in rag_response:
-                response["data"] = rag_response
-                response["response"] = f"Found {len(rag_response.get('results', []))} relevant results"
+        # Get smart assistant instance
+        assistant = get_smart_assistant(RAG_SERVICE_URL, PERSONAL_SERVICE_URL)
 
-        elif intent == "personal":
-            # Route to Personal module
-            personal_response = await health_checker.make_request(f"{PERSONAL_SERVICE_URL}/tasks")
-            if "error" not in personal_response:
-                response["data"] = personal_response
-                response["response"] = f"You have {len(personal_response.get('tasks', []))} tasks"
+        # Process the message
+        result = await assistant.process_message(
+            request.message,
+            context=request.context,
+            health_checker=health_checker
+        )
 
-        else:
-            response["response"] = "I can help you search for information or manage your tasks. What would you like to do?"
+        # Format response
+        response = {
+            "message": request.message,
+            "intent": {
+                "name": result.intent.name,
+                "confidence": result.intent.confidence,
+                "action": result.intent.action,
+                "entities": result.intent.entities
+            },
+            "response": result.response_text,
+            "actions": result.actions,
+            "data": result.data,
+            "processing_time": result.processing_time,
+            "timestamp": result.timestamp,
+            "user_id": request.user_id or "default_user"
+        }
+
+        logger.info(f"Assistant processed: {request.message} -> {result.intent.name} ({result.intent.confidence:.2f})")
+        return response
 
     except Exception as e:
-        response["response"] = f"Error processing request: {str(e)}"
-
-    return response
+        logger.error(f"Smart assistant error: {e}")
+        return {
+            "message": request.message,
+            "intent": {"name": "error", "confidence": 0.0, "action": "error", "entities": {}},
+            "response": f"I encountered an error processing your request: {str(e)}",
+            "actions": [],
+            "data": None,
+            "processing_time": 0.0,
+            "timestamp": datetime.now().isoformat(),
+            "user_id": request.user_id or "default_user"
+        }
 
 @app.get("/functions")
 async def get_openwebui_functions():
@@ -346,6 +347,108 @@ async def get_openwebui_functions():
     ]
 
     return {"functions": functions, "total": len(functions)}
+
+@app.post("/chat")
+async def chat_with_assistant(request: AssistantRequest):
+    """Chat interface for natural conversation with the assistant"""
+    try:
+        # Use the smart assistant for chat
+        assistant = get_smart_assistant(RAG_SERVICE_URL, PERSONAL_SERVICE_URL)
+        result = await assistant.process_message(
+            request.message,
+            context=request.context,
+            health_checker=health_checker
+        )
+
+        # Return a chat-optimized response
+        return {
+            "response": result.response_text,
+            "intent": result.intent.name,
+            "confidence": result.intent.confidence,
+            "actions_taken": len(result.actions),
+            "timestamp": result.timestamp
+        }
+
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        return {
+            "response": "I'm having trouble understanding that. Could you try rephrasing your question?",
+            "intent": "error",
+            "confidence": 0.0,
+            "actions_taken": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/capabilities")
+async def get_capabilities():
+    """Get assistant capabilities and example commands"""
+    return {
+        "capabilities": {
+            "knowledge_search": {
+                "description": "Search and retrieve information from the knowledge base",
+                "examples": [
+                    "Search for artificial intelligence",
+                    "What is machine learning?",
+                    "Find information about Docker",
+                    "Tell me about microservices"
+                ]
+            },
+            "task_management": {
+                "description": "Create, manage, and track personal tasks",
+                "examples": [
+                    "Create a task to review the AI paper",
+                    "Show my pending tasks",
+                    "Add a high priority task due tomorrow",
+                    "What tasks are due today?"
+                ]
+            },
+            "productivity_tracking": {
+                "description": "View productivity statistics and progress",
+                "examples": [
+                    "Show my productivity stats",
+                    "How many tasks did I complete this week?",
+                    "What's my focus score?"
+                ]
+            },
+            "schedule_management": {
+                "description": "View and manage your schedule and calendar",
+                "examples": [
+                    "What's my schedule today?",
+                    "Show me tomorrow's agenda",
+                    "Any meetings scheduled?"
+                ]
+            },
+            "integration_services": {
+                "description": "Sync with external services like Todoist",
+                "examples": [
+                    "Sync with Todoist",
+                    "Import tasks from external services"
+                ]
+            },
+            "natural_conversation": {
+                "description": "Engage in helpful conversation and provide assistance",
+                "examples": [
+                    "Help me get organized",
+                    "What can you do?",
+                    "How can I be more productive?"
+                ]
+            }
+        },
+        "features": [
+            "Advanced intent recognition using pattern matching and LLM assistance",
+            "Entity extraction from natural language",
+            "Context-aware responses",
+            "Multi-service integration",
+            "Productivity analytics",
+            "Task automation",
+            "Knowledge base search with vector similarity"
+        ],
+        "supported_integrations": [
+            "Todoist",
+            "OpenWebUI",
+            "Custom APIs"
+        ]
+    }
 
 # Original proxy endpoints
 @app.api_route("/rag/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

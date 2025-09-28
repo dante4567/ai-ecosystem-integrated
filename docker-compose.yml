@@ -1,34 +1,63 @@
-# AI Ecosystem Integration - Docker Compose Configuration
-# This file combines RAG module, Personal module, and API Gateway
-# External ports: 8011 (RAG), 8012 (Personal), 8013 (Gateway)
+# AI Ecosystem Integration - Complete Setup
+# Services: ChromaDB, RAG, Personal, Gateway with OpenWebUI integration
+# External ports: 8000 (ChromaDB), 8001 (RAG), 8002 (Personal), 8003 (Gateway)
 
 services:
-  rag-module:
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - PERSIST_DIRECTORY=/chroma/data
+    volumes:
+      - chroma_data:/chroma/data
+    networks:
+      - ai-ecosystem
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  rag-service:
     build: ./rag-module
     ports:
-      - "8011:8001"
+      - "8001:8001"
     environment:
       - PORT=8001
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
     env_file:
       - .env
     networks:
       - ai-ecosystem
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    volumes:
+      - ./shared-config:/app/shared-config
+      - rag_data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  personal-module:
+  personal-service:
     build: ./personal-module
     ports:
-      - "8012:8002"
+      - "8002:8002"
     environment:
       - PORT=8002
     env_file:
       - .env
     networks:
       - ai-ecosystem
+    volumes:
+      - ./shared-config:/app/shared-config
+      - personal_data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -36,22 +65,25 @@ services:
       retries: 3
 
   gateway:
-    build: ./gateway
+    build: ./integration
     ports:
-      - "8013:8003"
+      - "8003:8003"
     environment:
       - PORT=8003
-      - RAG_SERVICE_URL=http://rag-module:8001
-      - PERSONAL_SERVICE_URL=http://personal-module:8002
+      - RAG_SERVICE_URL=http://rag-service:8001
+      - PERSONAL_SERVICE_URL=http://personal-service:8002
+      - CHROMA_URL=http://chromadb:8000
     env_file:
       - .env
     networks:
       - ai-ecosystem
     depends_on:
-      rag-module:
+      rag-service:
         condition: service_healthy
-      personal-module:
+      personal-service:
         condition: service_healthy
+    volumes:
+      - ./shared-config:/app/shared-config
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -61,3 +93,11 @@ services:
 networks:
   ai-ecosystem:
     driver: bridge
+
+volumes:
+  chroma_data:
+    driver: local
+  rag_data:
+    driver: local
+  personal_data:
+    driver: local
